@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: >-
+  If you use this replication package, please cite it using the metadata below.
+  Please also cite the article it accompanies.
+title: >-
+  Replication package for "Oil Price Shocks, Fiscal Balance, and Public
+  Investment in Ecuador, 2015-2025"
+abstract: >-
+  Data and R Markdown code reproducing every table, figure and statistic
+  reported in the article. Contains the monthly analysis dataset for Ecuador
+  (January 2015 - November 2025) covering WTI crude oil prices and Non-Financial
+  Public Sector investment and fiscal balance, the complete analysis document
+  (VAR, impulse response functions, forecast error variance decomposition, and
+  symmetric and asymmetric Local Projections with Newey-West HAC standard
+  errors), and the source document backing the reported oil-revenue share.
+type: software
+authors:
+  - family-names: Jiménez-Albán
+    given-names: Xavier
+    orcid: https://orcid.org/0000-0002-7227-9392
+    affiliation: Independent Researcher, Quito, Ecuador
+  - family-names: Urquiza-Aguiar
+    given-names: Luis
+    orcid: https://orcid.org/0000-0002-6405-2067
+    affiliation: >-
+      Carrera de Software, Facultad de Ingeniería y Ciencias Aplicadas,
+      Universidad de las Américas (UDLA), Quito, Ecuador
+keywords:
+  - oil price shocks
+  - fiscal balance
+  - public investment
+  - Ecuador
+  - vector autoregression
+  - local projections
+  - dollarization
+  - reproducibility
+license: MIT
+version: 1.0.0
+
+# --- Fill in at release time -------------------------------------------------
+# Uncomment and complete these three lines once the GitHub repository is public
+# and Zenodo has minted the version DOI. Leave them commented until then: a
+# placeholder value here makes the file fail validation and GitHub hides the
+# "Cite this repository" button instead of showing an error.
+#
+# repository-code: 'https://github.com/<user>/ecuador-oil-fiscal-replication'
+# doi: 10.5281/zenodo.XXXXXXX
+# date-released: 'YYYY-MM-DD'

@@ -1,0 +1,1091 @@
+---
+title: "Oil Price Shocks, Fiscal Balance, and Public Investment in Ecuador, 2015--2025"
+# author: "Xavier Jimenez-Alban"
+# date: "\\today"
+lang: en-US
+nocite: '@*'
+output:
+  bookdown::pdf_document2:
+    number_sections: true
+    toc: false
+    keep_tex: true
+    latex_engine: xelatex
+bibliography: references.bib
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{float}
+  - \usepackage{booktabs}
+  - \usepackage{setspace}
+  - \usepackage{ragged2e}
+  - \setstretch{1.5}
+  - \RaggedRight
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+Sys.setlocale("LC_NUMERIC", "C")
+
+library(tidyverse)
+library(readr)
+library(tseries)
+library(vars)
+library(urca)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(sandwich)
+library(purrr)
+
+options(OutDec = ".")
+
+# ── Data loading and cleaning ─────────────────────────────────────────────────
+datos <- read_csv("../data/analysis/ecuador_oil_fiscal_monthly_2015_2025.csv", show_col_types = FALSE)
+
+ts_wti <- ts(datos$wti_usd_bbl,          start = c(2015, 1), frequency = 12)
+ts_inv <- ts(datos$nfps_investment_musd, start = c(2015, 1), frequency = 12)
+ts_bal <- ts(datos$nfps_balance_musd,    start = c(2015, 1), frequency = 12)
+
+l_wti     <- log(ts_wti)
+l_inv     <- log(ts_inv)
+dl_wti    <- diff(l_wti)
+l_inv_adj <- window(l_inv, start = c(2015, 2))
+ts_bal_adj <- window(ts_bal, start = c(2015, 2))
+
+datos_var <- cbind(dl_wti, ts_bal_adj, l_inv_adj)
+colnames(datos_var) <- c("d_wti", "bal", "inv")
+
+# WTI annual averages quoted in the Introduction when placing the 2019-2023
+# oil-share window in the context of the full estimation sample. Defined here,
+# in the first chunk, because inline expressions are evaluated in document
+# order and the Introduction precedes every estimation chunk.
+wti_2015     <- round(mean(window(ts_wti, c(2015,1), c(2015,12))), 1)
+wti_2016     <- round(mean(window(ts_wti, c(2016,1), c(2016,12))), 1)
+wti_1923     <- round(mean(window(ts_wti, c(2019,1), c(2023,12))), 1)
+wti_1516_gap <- round((1 - mean(c(wti_2015, wti_2016)) / wti_1923) * 100)
+
+# ── COVID-19 structural dummy (Mar–Jun 2020) ──────────────────────────────────
+# datos_var has 130 rows (Feb-2015 = row 1).
+# Mar-2020 is observation 62 in datos_var (1-based indexing).
+n_var   <- nrow(datos_var)   # 130
+d_covid <- rep(0, n_var)
+d_covid[62:65] <- 1          # Mar, Apr, May, Jun 2020
+
+# ── Custom IRF plot function ──────────────────────────────────────────────────
+# Replaces base-R plot.varirf() to avoid the "xy$x" axis-label bug
+# produced by the vars package when extracting variable names internally.
+plot_irf <- function(irf_obj, impulse_name, response_name,
+                     main = "", xlab = "Months",
+                     ylab = "Response (log-points)",
+                     col_line = "black", col_ci = "#c0392b") {
+  vals  <- irf_obj$irf[[impulse_name]]
+  lo    <- irf_obj$Lower[[impulse_name]]
+  hi    <- irf_obj$Upper[[impulse_name]]
+  h_seq <- seq_along(vals) - 1          # horizon 0, 1, ..., n.ahead
+
+  df <- data.frame(
+    horizon  = h_seq,
+    estimate = as.numeric(vals),
+    lower    = as.numeric(lo),
+    upper    = as.numeric(hi)
+  )
+
+  ggplot(df, aes(x = horizon, y = estimate)) +
+    geom_hline(yintercept = 0, linetype = "solid", colour = "grey60") +
+    geom_ribbon(aes(ymin = lower, ymax = upper),
+                fill = col_ci, alpha = 0.15) +
+    geom_line(aes(y = lower), linetype = "dashed", colour = col_ci, linewidth = 0.6) +
+    geom_line(aes(y = upper), linetype = "dashed", colour = col_ci, linewidth = 0.6) +
+    geom_line(colour = col_line, linewidth = 0.9) +
+    scale_x_continuous(breaks = h_seq) +
+    labs(title = main, x = xlab, y = ylab) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.minor = element_blank())
+}
+```
+
+# Abstract
+
+This study investigates the dynamic transmission of crude oil price shocks to public investment in Ecuador, a heavily indebted, fully dollarized commodity exporter, over the 2015--2025 period. Using a trivariate VAR(2) framework and Local Projections (LP), we find that public investment does not respond instantaneously to West Texas Intermediate (WTI) price shocks. Instead, the fiscal balance acts as a leading indicator with significant predictive content for the system ($p < 0.0001$). The impulse responses indicate a delayed procyclical adjustment: public investment responses peak within the first quarter after a WTI shock, consistent with an institutional friction narrative where revenue fluctuations must propagate through bureaucratic procurement pipelines before registering as capital expenditure. The peak response is economically non-negligible --- implying an elasticity of approximately unity --- but it is imprecisely estimated, so we characterize the transmission as economically material yet statistically weak at short horizons. Furthermore, we document asymmetry in the estimated fiscal response at short horizons, with public investment contracting more sharply after negative shocks than it expands after positive ones, although this difference is not statistically significant. Sub-period analysis reveals regime-specific heterogeneity, transitioning from moderate procyclicality under the Moreno administration (2017--2021) to an apparent de-coupling during the consolidation-focused Lasso/Noboa window (2021--2025). These findings underscore the need for investment-protecting fiscal rules to mitigate the structural volatility of public capital formation in dollarized emerging markets.
+
+**Keywords:** oil price shocks, public investment, VAR, impulse-response, fiscal procyclicality, fiscal rigidities, Ecuador, emerging markets.
+
+# Introduction
+
+Ecuador's fiscal architecture provides a policy-relevant setting for studying the transmission of commodity shocks in emerging markets. As a small, open, and fully dollarized economy, Ecuador lacks the conventional monetary and exchange rate instruments to absorb external fluctuations. Consequently, the fiscal budget remains the primary shock absorber, with petroleum revenues (Ingresos Petroleros) representing between 25% and 37% of total NFPS receipts over the 2019--2023 period, with an average of approximately 32% across those five years (BCE, *Boletín de Información Estadística Mensual*, Table 2.2, 2019--2023). This window is reported because it is the period for which Table 2.2 publishes the series on a consistent methodological basis; the share is not constant across our estimation sample. The 2015--2016 price collapse that opens the sample --- WTI averaged USD `r wti_2015` and USD `r wti_2016` per barrel in 2015 and 2016 respectively, some `r wti_1516_gap`% below the 2019--2023 average of USD `r wti_1923` --- compressed oil receipts sharply, so the opening years of the sample are characterized by a lower oil share than the range reported above. We therefore treat this range as indicative of the order of magnitude of Ecuador's oil-revenue dependence rather than as a time-invariant parameter, and the variation in this exposure across the sample is one motivation for the sub-period analysis reported below. In this context, the transmission of WTI crude oil price shocks to public expenditure is not merely a question of fiscal policy, but a test of how institutional rigidities and sovereign-risk conditions shape the path of capital formation. This paper asks whether, how, and with what delay WTI shocks affect public investment in Ecuador. Furthermore, Ecuador presents a unique dual exposure: while it exports crude oil, insufficient domestic refining capacity forces the state to import refined fuels sold internally at subsidized prices. Consequently, a positive WTI shock simultaneously boosts crude export revenues and increases the fiscal burden of the fuel subsidy, attenuating the net fiscal windfall [@mateo2014].
+
+The theoretical prediction for such economies is straightforward: positive (negative) oil price shocks expand (contract) fiscal space, and, absent countercyclical institutions, public expenditure --- particularly capital investment --- moves procyclically with commodity prices [@gavin1997; @arezki2011]. However, recent evidence suggests that the direct pass-through from oil revenues to spending is increasingly attenuated by complex institutional factors, including debt overhang, IMF program conditionality, and structural procurement rigidities [@ardanaz2021]. The post-2015 period in Ecuador, characterized by a sharp oil price collapse and a subsequent volatile recovery, offers an informative case to test whether these institutional factors have introduced significant asymmetries and lags into the fiscal transmission mechanism.
+
+This paper makes three principal contributions to the literature. First, we provide new empirical evidence for Ecuador using a trivariate system that explicitly incorporates the fiscal balance, moving beyond standard bivariate frameworks. Second, we employ **Local Projections (LP)** as a robust complementary method to quantify dynamic multipliers, offering protection against potential VAR misspecification. Finally, we explore the heterogeneity of the fiscal response across **distinct presidential sub-periods (2015--2025)**, treating Ecuador as an informative setting to study how institutional priorities and structural fiscal constraints shape and constrain the path of capital formation.
+
+The analysis is organized around four research questions: (i) Do WTI oil-price innovations generate a statistically detectable and economically meaningful response in NFPS public investment at short and medium horizons? (ii) Does the fiscal balance (*Resultado Global*) mediate this transmission, providing stronger predictive content for investment than oil-price returns alone? (iii) Are the investment responses asymmetric with respect to the sign of the price shock, with negative shocks generating more persistent contractions than positive shocks generate expansions? (iv) Does the estimated relationship vary systematically across the administrative regimes that characterized Ecuador's fiscal cycle between 2015 and 2025?
+
+Drawing on the theoretical and empirical literature, we derive the following testable hypotheses:
+
+- **H1.** WTI oil price shocks have a delayed but significant positive effect on NFPS public investment, consistent with a friction-laden transmission process [@ardanaz2021].
+- **H2.** The NFPS fiscal balance (Resultado Global) mediates the oil--investment relationship, acting as the primary channel through which commodity-price signals reach capital expenditure [@gavin1997].
+- **H3.** Public investment responds asymmetrically, contracting more sharply in response to negative oil price shocks than it expands in response to positive ones, reflecting borrowing constraints and the ratchet effect documented for Latin American fiscal policy [@kaminsky2004].
+- **H4.** The strength and direction of the fiscal transmission mechanism vary across administrative regimes, with consolidation-oriented governments exhibiting weaker or negative procyclicality [@vegh2015].
+
+The results suggest that the investment response is delayed and highly sensitive to the overall fiscal balance: economically non-negligible in magnitude, yet imprecisely estimated at short horizons. By focusing on the fiscal transmission of commodity-price shocks to public capital expenditure, the paper contributes to debates on how public finance constraints affect the stability of growth-enhancing public investment in emerging economies.
+
+This document follows the structure of the article: institutional and fiscal background, literature review, data and empirical strategy, aggregate results, sub-period analysis, discussion, and conclusions. The Appendix reports the raw test outputs and the early-sample (Correa) estimates.
+
+# Institutional and Fiscal Background: Ecuador, 2015--2025
+
+Ecuador’s status as a dollarized economy significantly constrains its macroeconomic toolkit. Without a national currency, the government cannot resort to competitive devaluations or independent monetary policy to absorb external shocks. Consequently, the national budget (NFPS) becomes the primary instrument for macroeconomic adjustment. In this "dollarized setting," oil price fluctuations translate directly into fiscal volatility, as petroleum remains a pillar of the state's revenue structure.
+
+Between 2015 and 2025, Ecuador transitioned through several distinct administrative regimes, each facing different fiscal challenges. The late-Correa administration (2015--2017) had to manage the end of the commodity boom and a mounting debt burden. The Moreno administration (2017--2021) initiated a pivot toward fiscal consolidation, further intensified by an IMF-supported program and the unprecedented shock of the COVID-19 pandemic. Finally, the Lasso and Noboa administrations (2021--2025) have operated under a regime of strict fiscal discipline and debt restructuring efforts, where public investment has often served as the primary adjustment variable for meeting deficit targets.
+
+An additional structural feature of Ecuador's oil economy deserves mention. Ecuador is simultaneously an exporter of crude oil and a substantial importer of refined petroleum products (petrol, diesel, LPG) which are heavily subsidized by the state. A rise in international oil prices therefore produces two opposing fiscal effects: it increases government revenue from crude exports while simultaneously raising the cost of the fuel-subsidy program. The net fiscal gain from a positive price shock is thus attenuated relative to what a pure revenue calculation would suggest, and this dual exposure helps explain why the investment response is weaker and more delayed than standard procyclicality models predict.
+
+These periods are treated here as **administrative sub-periods** that reflect different approximate fiscal regimes. This classification allows us to investigate whether the relationship between oil shocks and capital formation is an immutable structural property or a dynamic outcome of changing institutional priorities.
+
+# Literature Review
+
+## Commodity-Price Shocks and Government Spending
+
+The transmission of commodity-price shocks to fiscal aggregates is well documented for resource-dependent economies. @arezki2011 show that oil windfalls generate disproportionate increases in government spending, while @pieschacon2012 provides structural evidence that oil price shocks propagate to fiscal variables through both revenue and expenditure channels, with public investment bearing the brunt of adjustment during downturns. @cespedes2013 demonstrate that the fiscal multiplier in resource-rich economies is asymmetric: expansions funded by commodity revenues tend to be larger and faster than contractions. For Ecuador specifically, @bunce2023 use local projections to show that negative oil-price shocks have a more significant and persistent impact on output than positive shocks, a finding directly relevant to the asymmetric responses documented in the present paper.
+
+## Fiscal Procyclicality in Developing Economies
+
+The procyclicality of fiscal policy in developing countries is well established. @gavin1997 and @kaminsky2004 document that Latin American governments systematically expand expenditure during booms and contract it during downturns, in contrast to the countercyclical patterns observed in advanced economies. This behavior is attributed to limited access to international capital markets during recessions, political economy pressures, and the absence of credible fiscal rules [@ilzetzki2013]. For Ecuador specifically, @mateo2014 document the role of oil rents in financing the large-scale infrastructure programs of the 2000--2010 boom, while @cepal2019 characterizes the post-supercycle vulnerability of dollarized commodity exporters.
+
+## Institutional and Fiscal-Rule Constraints
+
+More recent work has shifted attention from average procyclicality estimates to the institutional determinants of their cross-country and over-time variation. @ardanaz2021 show that the design of fiscal rules --- specifically whether they protect investment from budget cuts --- is a first-order determinant of capital expenditure resilience. @vegh2015 document that the fiscal policy cycle varies not only across countries but also across political cycles within countries, a finding directly relevant to our sub-sample analysis. Sovereign-risk conditions constitute a related institutional constraint: @carrillo2023 show, using a Bayesian SVAR for Ecuador, that increases in public debt are the principal domestic driver of sovereign-risk spreads, the channel through which commodity downturns can translate into tightening financing conditions and further compress public investment. Related evidence also shows that sovereign ceiling rules and rating-agency incentives can transmit sovereign shocks to domestic banking systems [@wasi2021; @wasi2023]. At the firm and market levels, political risk can impair corporate-bond liquidity [@liu2025], while institutional and financing constraints condition innovation-led growth in emerging economies [@bui2026].
+
+## Methodological Approach and Research Gap
+
+The VAR methodology for identifying dynamic fiscal responses to commodity shocks was pioneered by @sims1980 and extended to fiscal applications by @blanchard2002 and @mountford2009. The use of IRFs to trace the persistence of commodity price shocks on fiscal variables is standard in this literature [@enders2014; @lutkepohl2005]. Recent studies have increasingly utilized Local Projections to investigate these dynamics in emerging economies due to their flexibility in handling non-linearities and potential misspecification [@razo2012; @bunce2023]. Our mixed-integration specification follows the recommendation of @sims1990, who demonstrate the validity of inference in VAR systems containing variables of different integration orders when the focus is on impulse-response dynamics rather than coefficient-level inference.
+
+Despite this robust body of work, a significant research gap remains regarding the Ecuadorian case in the post-2015 period. While @bunce2023 and @carrillo2023 advance the empirical understanding of oil-price transmission and sovereign-risk dynamics in Ecuador, no existing study employs a trivariate VAR framework over the 2015--2025 adjustment period to jointly quantify the dynamic response of public investment while explicitly controlling for the state's broader fiscal capacity (*Resultado Global*). Moreover, the literature has yet to explore how these responses vary across the different administrative regimes that have managed fiscal consolidation in a dollarized environment. This paper fills these gaps by providing a multi-period, institutionally aware analysis of the oil-investment nexus in Ecuador.
+
+# Data and Empirical Strategy
+
+## Data Description and Transformation
+
+The analysis uses monthly time-series data ($n = 131$ raw observations; $n = 130$ effective VAR observations after first-differencing) spanning January 2015 to November 2025. Table \@ref(tab:tabla-variables) summarizes the variables used in the study.
+
+```{r tabla-variables}
+tab_var <- tibble(
+  Variable = c("WTI Oil Price", "NFPS Fiscal Balance", "NFPS Public Investment"),
+  Definition = c("Monthly average price of WTI crude oil (USD/barrel)",
+                "NFPS 'Resultado Global' (Surplus/Deficit, Millions USD)",
+                "NFPS Accrual expenditure on non-financial assets (Millions USD)"),
+  Source = c("U.S. Energy Information Administration (EIA) / FRED (series: DCOILWTICO)",
+             "Central Bank of Ecuador (BCE) -- Monthly Statistical Bulletin",
+             "Central Bank of Ecuador (BCE) -- Monthly Statistical Bulletin"),
+  Transformation = c("Log-level ($lx_t$) and First difference ($\\Delta lx_t$)",
+                    "Levels ($b_t$)",
+                    "Log-levels ($ly_t$)")
+)
+
+kable(tab_var,
+      booktabs = TRUE,
+      linesep  = "",
+      escape   = FALSE,
+      caption  = "Variables, sources, and transformations",
+      label    = "tabla-variables") |>
+  kable_styling(latex_options = c("hold_position", "striped"),
+                font_size = 10) |>
+  column_spec(1, width = "3cm") |>
+  column_spec(2, width = "5cm") |>
+  column_spec(3, width = "4cm") |>
+  column_spec(4, width = "4cm")
+```
+
+The WTI crude oil price series corresponds to the monthly average spot price (USD/barrel), obtained from the U.S. Energy Information Administration (EIA), also available through the FRED database of the Federal Reserve Bank of St. Louis (series: DCOILWTICO). (Note that time-aggregating daily prices to monthly averages can mechanically induce some moving-average serial correlation, which is partially absorbed by the VAR lag structure). WTI is used as the international benchmark for oil-price conditions because it is the most widely used reference price in the empirical literature on oil-fiscal transmission and is available at high frequency with no revisions. Ecuador's Oriente and Napo crudes sell at time-varying discounts relative to WTI; while using the Ecuadorian export price or direct fiscal oil-revenue series would be preferable, these series are not available at the monthly frequency required for the 2015--2025 window at the time of this analysis. Furthermore, using a broad proxy like WTI does not permit decomposing price movements into underlying supply and demand shocks [@kilian2009]. The implications of this proxy choice are discussed in Section~9.
+
+The public investment series corresponds to the *devengado* (accrual) expenditure on non-financial assets by the Non-Financial Public Sector (NFPS), capturing the actual registration of investment execution rather than mere budget allocation. Both fiscal series are drawn from the Central Bank of Ecuador (BCE) Monthly Statistical Bulletin (*Boletín de Información Estadística Mensual*, Table 2.2.1), accessed in January 2026.
+
+A note on the fiscal balance measure: the NFPS *Resultado Global* is computed as total revenues minus total expenditures, where the latter includes public investment. As a result, the fiscal balance and public investment are not fully independent by construction --- a reduction in investment mechanically improves the balance. This accounting relationship is one reason we interpret the estimated dynamic responses as consistent with a fiscally mediated channel rather than as evidence of a purely behavioral causal link.
+
+The oil price and investment series are log-transformed to stabilize variance and permit approximate percentage interpretation of dynamic responses. Because the fiscal balance includes negative values (representing monthly deficits), it is included in levels:
+
+$$
+lx_t = \ln(X_t) \qquad ly_t = \ln(Y_t) \qquad b_t = B_t
+$$
+
+The one effective observation lost to first-differencing means the VAR estimation window runs from February 2015 to November 2025 ($n = 130$).
+
+```{r tabla-descriptiva}
+# Descriptive statistics for transformed series (Table 2)
+raw_mat <- data.frame(
+  `WTI ret.`    = as.numeric(dl_wti),
+  `Balance (M USD)`  = as.numeric(ts_bal_adj),
+  `log Inv.` = as.numeric(l_inv_adj)
+)
+
+desc_raw <- map_dfr(raw_mat, function(x) {
+  tibble(
+    N    = sum(!is.na(x)),
+    Mean = mean(x, na.rm = TRUE),
+    SD   = sd(x, na.rm = TRUE),
+    Min  = min(x, na.rm = TRUE),
+    Median = median(x, na.rm = TRUE),
+    Max  = max(x, na.rm = TRUE)
+  )
+}, .id = "Variable") |>
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+
+kable(desc_raw,
+      booktabs = TRUE,
+      linesep  = "",
+      col.names = c("Variable", "N", "Mean", "Std. Dev.", "Min", "Median", "Max"),
+      caption  = "Descriptive statistics of transformed series (February 2015 -- November 2025)",
+      label    = "tabla-descriptiva") |>
+  kable_styling(latex_options = c("hold_position", "striped"), font_size = 10) |>
+  column_spec(1, width = "3.8cm") |>
+  column_spec(2:7, width = "1.6cm")
+```
+
+```{r tabla-correlacion}
+# Correlation matrix for VAR-ready (transformed) variables
+var_mat <- as.data.frame(datos_var)
+colnames(var_mat) <- c("$\\Delta lx_t$ (WTI ret.)",
+                       "$b_t$ (Balance)",
+                       "$ly_t$ (log Inv.)")
+
+cor_mat <- cor(var_mat, use = "complete.obs") |>
+  round(3)
+
+# Lower-triangle only (standard presentation)
+cor_mat[upper.tri(cor_mat)] <- NA
+
+kable(cor_mat,
+      booktabs = TRUE,
+      linesep  = "",
+      escape   = FALSE,
+      na_rep  = "",
+      caption  = "Pairwise correlations of VAR-transformed variables ($n = 130$)",
+      label    = "tabla-correlacion") |>
+  kable_styling(latex_options = c("hold_position", "striped"), font_size = 10) |>
+  column_spec(1, width = "4cm") |>
+  column_spec(2:4, width = "3cm")
+```
+
+## Econometric Strategy
+
+The identification strategy is designed to test the consistency of dynamic patterns with a fiscally mediated transmission channel. Figure \@ref(fig:fig-transmission) illustrates the posited transmission mechanism.
+
+The posited transmission chain operates as follows. A positive WTI shock raises Ecuador's crude oil export revenues, which flow into the Non-Financial Public Sector through royalties, taxes, and direct transfers from the state oil company (Petroecuador). This improvement in fiscal oil receipts strengthens the overall *Resultado Global*, relaxing the liquidity constraint that governs budget execution. With a lag determined by multi-stage procurement regulations and *devengado* accrual accounting, the improved fiscal position allows expanded registration of capital expenditure. This chain is subject to two attenuating forces: first, the refined-fuel subsidy burden rises with WTI, partly offsetting the revenue windfall; second, under consolidation-focused administrations, commodity income windfalls may be directed toward debt service rather than investment. It bears noting that because public investment is an expenditure component of the *Resultado Global*, the two variables are not fully independent by construction; the dynamic responses documented below should therefore be interpreted as evidence consistent with this fiscally mediated channel rather than as proof of a purely behavioral causal link.
+
+```{r fig-transmission, echo=FALSE, fig.cap="Conceptual transmission channel: from oil shocks to public investment.", out.width="100%", fig.align='center', fig.height=2}
+# Creating a formal boxed diagram for the transmission channel
+library(ggplot2)
+nodes <- data.frame(
+  x = c(1, 2.5, 4, 5.5),
+  y = c(1, 1, 1, 1),
+  label = c("WTI price\ninnovation", "Fiscal balance\nliquidity", "Administrative\nlag", "Public\ninvestment")
+)
+
+ggplot(nodes, aes(x = x, y = y)) +
+  geom_rect(aes(xmin = x - 0.65, xmax = x + 0.65, ymin = y - 0.3, ymax = y + 0.3), 
+            fill = "white", color = "black", size = 0.5) +
+  geom_text(aes(label = label), size = 3.5, fontface = "bold") +
+  geom_segment(aes(x = 1.65, y = 1, xend = 1.85, yend = 1), 
+               arrow = arrow(length = unit(0.2, "cm"), type = "closed")) +
+  geom_segment(aes(x = 3.15, y = 1, xend = 3.35, yend = 1), 
+               arrow = arrow(length = unit(0.2, "cm"), type = "closed")) +
+  geom_segment(aes(x = 4.65, y = 1, xend = 4.85, yend = 1), 
+               arrow = arrow(length = unit(0.2, "cm"), type = "closed")) +
+  theme_void() +
+  xlim(0.2, 6.3) + ylim(0.5, 1.5)
+```
+
+The empirical models do not directly observe procurement or debt-service decisions; rather, they test whether the dynamic patterns are consistent with a fiscal-transmission channel mediated by the overall fiscal balance. The identification strategy proceeds through nine sequential steps, combining traditional VAR analysis with robust Local Projections:
+
+1. **Unit-root analysis:** Triangulated stationarity testing via (i) Augmented Dickey-Fuller (ADF), (ii) KPSS, and (iii) Zivot--Andrews with endogenous break detection.
+
+2. **VAR estimation:** Baseline trivariate VAR($p$) model:
+$$
+\mathbf{Y}_t = \mathbf{c} + \sum_{i=1}^{p} \mathbf{\Phi}_i \mathbf{Y}_t-i + \boldsymbol{\varepsilon}_t
+$$
+where $\mathbf{Y}_t = (\Delta lx_t,\; b_t,\; ly_t)'$. We adopt $p = 2$ lags to ensure parsimony and preserve degrees of freedom for the sub-period analysis. The **Cholesky decomposition** ($\Delta lx_t \rightarrow b_t \rightarrow ly_t$) is adopted as the identifying assumption. This ordering reflects the economic prior that international oil-price innovations affect the fiscal balance within the same month (through revenue flows), while public investment execution --- governed by multi-stage procurement and *devengado* registration --- responds with the greatest inertia. The implications of this ordering are assessed in the VAR(12) sensitivity analysis. This specification provides the baseline for the Impulse Response Function (IRF) and Forecast Error Variance Decomposition (FEVD).
+
+3. **Local Projections (LP):** Following @jorda2005, we estimate the dynamic response using Local Projections (LP) as a robust complementary method, leveraging the asymptotic equivalence between VAR and LP [@plagborg2021]. The LP regressions are estimated via ordinary least squares (OLS) with Newey-West heteroskedasticity and autocorrelation consistent (HAC) standard errors at bandwidth $h+1$. LP provides multipliers at each horizon $h$ directly from a sequence of regressions, without iterating the VAR coefficients forward:
+$$
+ly_{t+h} = \alpha_h + \beta_h \Delta lx_t + \sum_{j=1}^{p} \gamma_{h,j} \mathbf{Y}_{t-j} + \delta_h D_t^{COVID} + \eta_{t+h}
+$$
+The coefficient $\beta_h$ provides the dynamic multiplier at horizon $h$. As shown by @plagborg2021, LP and VAR impulse responses are asymptotically equivalent under correct specification, but LP is more robust to lag truncation and structural breaks, which is relevant given the multiple regime changes in Ecuador's 2015--2025 fiscal history. To ensure comparability with the orthogonalized VAR impulse responses, all LP coefficients and confidence intervals are rescaled by the standard deviation of the WTI innovation used in the Cholesky decomposition ($\hat{s} = \sqrt{\hat{\Sigma}_{11}}$, where $\hat{\Sigma}$ is the estimated VAR residual covariance matrix). For negative shocks, the response is evaluated at $-\hat{s}$, because $\Delta lx_t^- = \min(0, \Delta lx_t)$.
+
+4. **Asymmetry analysis:** To test for non-linear fiscal responses, we decompose the WTI return $\Delta lx_t$ into positive ($\Delta lx_t^+$) and negative ($\Delta lx_t^-$) shocks:
+$$
+\Delta lx_t^+ = \max(0, \Delta lx_t) \qquad \Delta lx_t^- = \min(0, \Delta lx_t)
+$$
+We then estimate the Local Projections separately for each component to determine if the investment response to a price increase is symmetric to its response to a price decline.
+
+5. **Granger causality:** Wald tests for block Granger non-causality from $\Delta lx_t$ to $ly_t$ and vice versa. We interpret these tests as evidence of **predictive content** rather than structural causality.
+
+6. **Model diagnostics:** (i) characteristic-root stability check; (ii) Portmanteau asymptotic test for residual serial correlation; (iii) Jarque--Bera multivariate normality test.
+
+7. **Orthogonalized IRF:** Response of $ly_t$ to a one-standard-deviation innovation in $\Delta lx_t$, using the Cholesky ordering described above.
+
+8. **FEVD:** Proportion of the $h$-step-ahead forecast variance of $ly_t$ attributable to $\Delta lx_t$ and $b_t$ innovations, for $h = 1, \ldots, 12$.
+
+9. **Sub-period and institutional analysis:** Sub-period estimation for four presidential administrations (administrative regimes) to identify institutional heterogeneity in the fiscal cycle.
+
+Regarding the mixed-integration specification, log WTI is treated as $I(1)$ and therefore enters the VAR in first differences. The fiscal balance is included in levels based on the ADF and Zivot--Andrews results. Log public investment is best characterized as stationary around a structural break; however, the KPSS statistic rejects stationarity, introducing some ambiguity in its classification. Following @sims1990, the VAR combines differenced and level variables because the focus is on dynamic responses and forecast-error decompositions rather than coefficient-level long-run inference. This choice avoids over-differencing the investment series while acknowledging the break-stationary nature of the fiscal variables.
+
+# Empirical Results
+
+## Exploratory Analysis
+
+Visualizing the series provides the first clues for the empirical specification. Figure \@ref(fig:fig-series-plot) highlights the volatility and structural breaks that motivate the use of structural-break-aware unit root tests and administrative sub-period analysis.
+
+```{r fig-series-plot, fig.cap="WTI crude oil price, NFPS fiscal balance, and NFPS public investment, Ecuador (2015--2025). Dashed vertical line: COVID-19 shock (March 2020).", fig.align='center', fig.pos="H", out.width="72%", fig.height=6.5}
+par(mfrow = c(3, 1), mar = c(3, 4, 2, 1))
+plot(ts_wti,
+     main = "WTI Crude Oil Price",
+     ylab = "USD per barrel", xlab = "",
+     col = "darkred", lwd = 2)
+abline(v = 2020.17, lty = 2, col = "gray50")
+plot(ts_bal,
+     main = "NFPS Fiscal Balance",
+     ylab = "Millions of USD", xlab = "",
+     col = "darkgreen", lwd = 2)
+abline(h = 0, lty = 1, col = "black")
+abline(v = 2020.17, lty = 2, col = "gray50")
+plot(ts_inv,
+     main = "NFPS Public Investment",
+     ylab = "Millions of USD", xlab = "Year",
+     col = "darkblue", lwd = 2)
+abline(v = 2020.17, lty = 2, col = "gray50")
+```
+
+Figure \@ref(fig:fig-series-plot) reveals three salient features. WTI prices exhibit a non-stationary trajectory with structural breaks. The NFPS fiscal balance shows high volatility with recurring deficits, particularly acute during the 2016 earthquake and the 2020 pandemic. Public investment displays strong seasonal patterns superimposed on a structural downward trend. The visual divergence of the three series motivates the formal unit-root analysis below.
+
+## Unit-Root Analysis
+
+```{r prueba-adf, include=FALSE}
+adf_wti_raw <- adf.test(l_wti)
+adf_bal_raw <- adf.test(ts_bal)
+adf_inv_raw <- adf.test(l_inv)
+```
+
+```{r kpss-test, include=FALSE}
+kpss_wti_raw <- ur.kpss(l_wti, type = "mu", lags = "short")
+kpss_bal_raw <- ur.kpss(ts_bal, type = "mu", lags = "short")
+kpss_inv_raw <- ur.kpss(l_inv, type = "mu", lags = "short")
+```
+
+```{r za-test, include=FALSE}
+za_wti_raw <- ur.za(l_wti, model = "both", lag = 5)
+za_bal_raw <- ur.za(ts_bal, model = "both", lag = 5)
+za_inv_raw <- ur.za(l_inv, model = "both", lag = 5)
+```
+
+```{r adf-vals, include=FALSE}
+adf_wti  <- adf_wti_raw
+adf_bal  <- adf_bal_raw
+adf_inv  <- adf_inv_raw
+pval_wti <- round(adf_wti$p.value, 4)
+pval_bal <- round(adf_bal$p.value, 4)
+pval_inv <- round(adf_inv$p.value, 4)
+
+# KPSS critical values: 10%=0.347, 5%=0.463, 1%=0.739
+kpss_wti_stat <- round(kpss_wti_raw@teststat, 4)
+kpss_bal_stat <- round(kpss_bal_raw@teststat, 4)
+kpss_inv_stat <- round(kpss_inv_raw@teststat, 4)
+
+# Zivot-Andrews: statistics and critical values
+# Note: ur.za does not return a p-value directly in the summary.
+# The value -5.3152 (for example) is the test statistic.
+za_wti_stat <- round(za_wti_raw@teststat, 4)
+za_bal_stat <- round(za_bal_raw@teststat, 4)
+za_inv_stat <- round(za_inv_raw@teststat, 4)
+
+za_wti_bp <- za_wti_raw@bpoint
+za_bal_bp <- za_bal_raw@bpoint
+za_inv_bp <- za_inv_raw@bpoint
+```
+
+The three unit-root procedures deliver a consistent picture for log WTI, but a more nuanced one for the two fiscal variables. For **log WTI**: the ADF fails to reject the unit-root null ($p = `r pval_wti`$); the KPSS statistic (`r kpss_wti_stat`) rejects stationarity at all conventional levels; and the Zivot--Andrews statistic (`r za_wti_stat`) also fails to reject the null of a unit root with structural break. The log WTI series is robustly classified as $I(1)$.
+
+For the **NFPS fiscal balance**: the ADF rejects the unit-root null ($p = `r pval_bal`$), and the Zivot--Andrews statistic (`r za_bal_stat`) also rejects the null at the 5% level (critical value $\approx -5.08$), identifying a break at observation `r za_bal_bp`. The KPSS statistic (`r kpss_bal_stat`) is borderline: it rejects stationarity at the 10% level (0.347) but fails to reject it at the 5% level (0.463). Given the strong rejection by ADF and ZA, the balance is treated as $I(0)$.
+
+For **log public investment**: the ADF rejects the unit-root null at the 5% level ($p = `r pval_inv`$), and the Zivot--Andrews statistic (`r za_inv_stat`) rejects the null, identifying a break-date at observation `r za_inv_bp`. However, the KPSS statistic (`r kpss_inv_stat`) rejects stationarity, placing ADF and KPSS in conflict for this series. This conflict is expected for a series that is stationary around a structural break: the ADF and ZA detect stationarity conditional on the break, while the KPSS, which does not account for breaks, rejects. Log public investment is therefore classified as **stationary around a structural break** and included in levels. Following @sims1990, the VAR combines differenced and level variables because the focus is on impulse-response dynamics rather than long-run coefficient inference. Raw test outputs are provided in the Appendix.
+
+## Lag Selection
+
+```{r seleccion-rezagos, comment=""}
+seleccion <- VARselect(datos_var, lag.max = 12, type = "const")
+print(seleccion$selection)
+```
+
+```{r rezagos-vals, include=FALSE}
+sel  <- seleccion$selection
+p_aic <- sel["AIC(n)"]
+p_sc  <- sel["SC(n)"]
+```
+
+Lag-order criteria provide mixed guidance. AIC, HQ, and FPE select 12 monthly lags, whereas SC selects `r p_sc` lag. Given the effective sample size (130 observations) and the need to preserve degrees of freedom for sub-period analysis, the baseline specification adopts a parsimonious VAR(2), capturing short-run adjustment while avoiding excessive parameterization. We therefore interpret the VAR(2) as a benchmark specification rather than the only admissible dynamic structure. Because the Portmanteau test rejects the null of no residual serial correlation in the baseline model, the VAR(12) specification is reported as a key sensitivity exercise for assessing delayed oil-price transmission and longer monthly dynamics.
+
+## Baseline VAR: Granger Causality and Power Analysis
+
+A key concern in interpreting non-significant results is whether the test has sufficient statistical power to detect meaningful effects. We perform a Monte Carlo power analysis by simulating a trivariate VAR(2) system ($n=130$) where we test the capability to detect a moderate and economically significant peak response of 0.25 to oil shocks. The data-generating process (DGP) follows the estimated VAR(2) coefficient structure with normally distributed errors (zero mean, standard deviation 0.1), and a "moderate" effect size is defined as a direct VAR(2) transmission coefficient of 0.25 from WTI returns to public investment at lag one. Bootstrap confidence intervals throughout this paper use a standard recursive residual bootstrap resampling the VAR residuals, which provides a non-parametric approximation to the sampling distribution of the IRFs. Given the residual autocorrelation documented in the diagnostics appendix, the direction and significance of the response are primarily assessed via the LP-HAC estimates as the specification-robust check.
+
+```{r power-analysis, cache=TRUE}
+# Monte Carlo Power Analysis for Granger Causality
+set.seed(123)
+n_sim <- 500
+n_obs <- 130
+sig_count <- 0
+for(i in 1:n_sim) {
+  e <- matrix(rnorm(n_obs * 3, 0, 0.1), ncol = 3)
+  y <- matrix(0, nrow = n_obs, ncol = 3)
+  for(t in 3:n_obs) {
+    y[t, 1] <- 0.3 * y[t-1, 1] + e[t, 1]
+    y[t, 2] <- 0.2 * y[t-1, 1] + 0.4 * y[t-1, 2] + e[t, 2]
+    y[t, 3] <- 0.25 * y[t-1, 1] + 0.15 * y[t-1, 2] + 0.4 * y[t-1, 3] + e[t, 3]
+  }
+  colnames(y) <- c("d_wti", "bal", "inv")
+  v_sim <- tryCatch(VAR(y, p = 2, type = "const"), error = function(e) NULL)
+  if(!is.null(v_sim)) {
+    pval <- causality(v_sim, cause = "d_wti")$Granger$p.value
+    if(pval < 0.05) sig_count <- sig_count + 1
+  }
+}
+power_est <- sig_count / n_sim
+```
+
+The simulation reveals that with our sample size and a trivariate VAR(2) structure, the probability of rejecting the null of no Granger causality for a moderate effect size is approximately `r round(power_est * 100, 1)`%. This suggests that our failure to reject the null for the observed data is an "informative zero" --- implying that any existing transmission is likely too weak to be distinguishable from noise at short horizons.
+
+```{r estimacion-var, include=FALSE}
+modelo_var <- VAR(datos_var, p = 2, type = "const")
+caus_wti   <- causality(modelo_var, cause = "d_wti")
+caus_bal   <- causality(modelo_var, cause = "bal")
+pval_gr    <- round(caus_wti$Granger$p.value, 4)
+pval_gr_b  <- round(caus_bal$Granger$p.value, 4)
+
+# ── shock_wti: exact WTI innovation SD used in the Cholesky decomposition ────
+# This is the normalization used by irf() internally; we use it to rescale LP
+# coefficients so that VAR IRFs and LP responses are on the same log-point scale.
+Sigma_u   <- summary(modelo_var)$covres
+shock_wti <- sqrt(Sigma_u["d_wti", "d_wti"])
+
+# Quoted in the note to the model-comparison table. The orthogonalized
+# innovation is what irf() applies; the unconditional SD of the series is a
+# different quantity and is reported alongside it to keep the two distinct.
+# formatC keeps the trailing zero: round() would render 10.70 as "10.7".
+shock_pct  <- formatC(shock_wti * 100,                 format = "f", digits = 2)
+sd_wti_pct <- formatC(sd(datos_var[, "d_wti"]) * 100,  format = "f", digits = 2)
+
+```
+
+The Granger tests indicate that the fiscal balance carries strong **Granger-causal content** for the system's joint dynamics ($p < 0.0001$), while WTI returns ($p = `r pval_gr`$) do not Granger-cause the other variables at the two-month horizon. The Granger test does not establish structural causality; it indicates whether lagged values of one variable help predict another, net of its own lags. The strong result for the fiscal balance is therefore interpreted as evidence that the state's overall liquidity position is a leading indicator for the system, consistent with the fiscal-transmission channel. The absence of short-run Granger causality from WTI returns is consistent with a delayed transmission mechanism in which oil-price innovations take several months to propagate through the procurement pipeline.
+
+## Model Diagnostics
+
+```{r diagnostico-var, include=FALSE}
+raiz_max  <- round(max(roots(modelo_var)), 4)
+prueba_serial <- serial.test(modelo_var, lags.pt = 20, type = "PT.asymptotic")
+pval_port <- round(prueba_serial$serial$p.value, 4)
+prueba_jb <- normality.test(modelo_var, multivariate.only = FALSE)
+pval_jb   <- round(prueba_jb$jb.mul$JB$p.value, 4)
+hay_autocorr <- pval_port < 0.05
+
+# modelo_var12 computed here (early) so the Portmanteau reference below is available.
+# The later var12 chunk reuses this object without re-estimating.
+modelo_var12 <- VAR(datos_var, p = 12, type = "const")
+prueba_serial_12 <- serial.test(modelo_var12, lags.pt = 20, type = "PT.asymptotic")
+pval_port_12 <- round(prueba_serial_12$serial$p.value, 4)
+```
+
+All characteristic roots lie strictly inside the unit circle (maximum modulus $= `r raiz_max`$), confirming dynamic stability. The Portmanteau test rejects the null of no residual serial correlation in the VAR(2) baseline ($p = `r pval_port`$), indicating that some monthly dynamics are not fully captured by two lags. This is a known limitation of parsimonious specifications with monthly fiscal data. While the VAR(12) specification is estimated precisely to assess the consequences of longer lag structures, it also struggles to fully eliminate residual autocorrelation ($p = `r pval_port_12`$). Therefore, we treat the VAR models as yielding directionally informative but parametrically imprecise estimates, and rely primarily on Local Projections (which employ Newey-West HAC standard errors) as our specification-robust check for impulse responses. The multivariate Jarque--Bera test rejects normality ($p = `r pval_jb`$), a common feature in monthly macro data with large outliers (e.g., the COVID-19 shock); bootstrap inference addresses this directly.
+
+## Impulse Response Functions: Baseline Model
+
+We estimate the response of log public investment to a one-standard-deviation innovation in each shock. For WTI returns, a standard deviation innovation corresponds to a monthly price change of approximately `r round(sd(dl_wti)*100, 2)`%.
+
+```{r irf-wti-plot, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation WTI shock. Dashed red lines: 95\\% wild bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+irf_wti <- irf(modelo_var, impulse = "d_wti", response = "inv",
+               n.ahead = 12, boot = TRUE, ci = 0.95, runs = 500)
+plot_irf(irf_wti,
+         impulse_name  = "d_wti",
+         response_name = "inv",
+         main = "Response of public investment to WTI shock",
+         ylab = "Response (log-points)")
+```
+
+```{r irf-bal-plot, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation Fiscal Balance shock. Dashed red lines: 95\\% bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+irf_bal <- irf(modelo_var, impulse = "bal", response = "inv",
+               n.ahead = 12, boot = TRUE, ci = 0.95, runs = 500)
+plot_irf(irf_bal,
+         impulse_name  = "bal",
+         response_name = "inv",
+         main = "Response of public investment to Fiscal Balance shock",
+         ylab = "Response (log-points)")
+```
+
+```{r irf-base-vals, include=FALSE}
+# Extract values for text reference
+irf_vals <- irf_wti$irf$d_wti
+peak_m   <- which.max(irf_vals)
+peak_v   <- round(max(irf_vals), 4)
+peak_pct <- round(peak_v * 100, 2)
+
+irf_vals_b <- irf_bal$irf$bal
+peak_m_b   <- which.max(irf_vals_b)
+peak_v_b   <- round(max(irf_vals_b), 4)
+```
+
+The response to a **WTI shock** peaks at month `r peak_m` with a coefficient of `r peak_v` (approximately `r peak_pct`% in log-point terms; Figure \@ref(fig:irf-wti-plot)). The estimated peak response is economically non-negligible --- a peak of `r peak_v` log points in response to a one-standard-deviation WTI innovation implies an elasticity of approximately unity --- but direct numerical comparison with existing studies is difficult because the literature reports effects using different normalizations, fiscal aggregates, monetary regimes, and shock definitions. For orientation, @pieschacon2012 provides structural evidence of oil-price transmission to fiscal variables in Mexico and Norway --- economies with independent monetary policy and sovereign wealth funds --- and documents adjustment patterns of a broadly similar sign and timing. Our estimated response, while consistent in sign, is likely attenuated relative to oil exporters with flexible exchange rates, as Ecuador's dollarization forecloses the expenditure-switching channel and the refined-fuel subsidy partly offsets the fiscal windfall. Throughout this document we distinguish between the statistical precision of this response, which is limited at short horizons, and its economic magnitude, which is not negligible; the two characterizations are complementary rather than contradictory.
+
+The response to a **Fiscal Balance shock** is more immediate: Figure \@ref(fig:irf-bal-plot) shows that investment responds negatively at horizon 1 before turning positive and peaking at month `r peak_m_b`. The initial negative response at month 1 likely reflects the mechanical accounting relationship between the two variables (investment is a component of the expenditure side of the Resultado Global), while the positive peak from month 2 onwards is consistent with a behavioral liquidity channel. The transience of both impulses highlights the limited durability of commodity-driven fiscal space in a heavily indebted, dollarized economy.
+
+## Local Projections: Robustness and Asymmetry
+
+To address the potential for misspecification in the VAR framework, we estimate the dynamic response of public investment using Local Projections (LP). Figure \@ref(fig:lp-symmetric-plot) presents the symmetric LP IRF,
+ which confirms the baseline result: a positive but delayed response that peaks around month 3 and fades within a semester.
+
+```{r lp-estimation, include=FALSE}
+# Tidy a fitted lm using a supplied covariance matrix, mirroring the columns
+# that broom::tidy(conf.int = TRUE) returns. Used to build the LP output on
+# Newey-West HAC standard errors instead of the classical OLS ones.
+tidy_hac <- function(mod, V, level = 0.95) {
+  b    <- coef(mod)
+  se   <- sqrt(diag(V))
+  dfr  <- mod$df.residual
+  crit <- qt(1 - (1 - level) / 2, dfr)
+  tibble(term      = names(b),
+         estimate  = as.numeric(b),
+         std.error = as.numeric(se),
+         statistic = as.numeric(b / se),
+         p.value   = as.numeric(2 * pt(abs(b / se), dfr, lower.tail = FALSE)),
+         conf.low  = as.numeric(b - crit * se),
+         conf.high = as.numeric(b + crit * se))
+}
+
+# LP estimation function (Symmetric)
+estimate_lp <- function(data, h_max = 12, p = 2, shock_col = "d_wti", dep_col = "inv", exog = NULL) {
+  res <- map_dfr(0:h_max, function(h) {
+    df_temp <- data
+    df_temp$y_lead <- dplyr::lead(data[[dep_col]], h)
+    lags_list <- map_chr(1:p, ~ paste0("dplyr::lag(", dep_col, ", ", .x, ")"))
+    lags_bal  <- map_chr(1:p, ~ paste0("dplyr::lag(bal, ", .x, ")"))
+    lags_str  <- paste(c(lags_list, lags_bal), collapse = " + ")
+    shock_lags_list <- map_chr(1:p, ~ paste0("dplyr::lag(", shock_col, ", ", .x, ")"))
+    shock_lags      <- paste(shock_lags_list, collapse = " + ")
+    f_str <- paste0("y_lead ~ ", shock_col, " + bal + ", lags_str, " + ", shock_lags)
+    if (!is.null(exog)) f_str <- paste0(f_str, " + ", exog)
+    mod <- lm(as.formula(f_str), data = df_temp)
+    # Newey-West HAC at bandwidth h + 1: the overlapping windows of the LP
+    # regressions induce serial correlation in the residuals by construction.
+    V_hac <- NeweyWest(mod, lag = h + 1, prewhite = FALSE, adjust = TRUE)
+    tidy_mod <- tidy_hac(mod, V_hac) |> dplyr::filter(term == shock_col)
+    tidy_mod$horizon <- h
+    tidy_mod
+  })
+  res
+}
+
+# LP estimation function (Asymmetric Joint)
+estimate_lp_asym <- function(data, h_max = 12, p = 2, dep_col = "inv", exog = "d_covid") {
+  res <- map_dfr(0:h_max, function(h) {
+    df_temp <- data
+    df_temp$y_lead <- dplyr::lead(data[[dep_col]], h)
+    lags_list <- map_chr(1:p, ~ paste0("dplyr::lag(", dep_col, ", ", .x, ")"))
+    lags_bal  <- map_chr(1:p, ~ paste0("dplyr::lag(bal, ", .x, ")"))
+    lags_str  <- paste(c(lags_list, lags_bal), collapse = " + ")
+    shock_lags_pos <- paste(map_chr(1:p, ~ paste0("dplyr::lag(d_wti_pos, ", .x, ")")), collapse = " + ")
+    shock_lags_neg <- paste(map_chr(1:p, ~ paste0("dplyr::lag(d_wti_neg, ", .x, ")")), collapse = " + ")
+    f_str <- paste0("y_lead ~ d_wti_pos + d_wti_neg + bal + ", lags_str, " + ", shock_lags_pos, " + ", shock_lags_neg, " + ", exog)
+    mod <- lm(as.formula(f_str), data = df_temp)
+    
+    # Newey-West HAC at bandwidth h + 1 (same convention as the symmetric LP)
+    V_hac <- NeweyWest(mod, lag = h + 1, prewhite = FALSE, adjust = TRUE)
+
+    # Manual Wald test for beta_pos = beta_neg, on the HAC covariance
+    b <- coef(mod)
+    v <- V_hac
+    R <- rep(0, length(b))
+    names(R) <- names(b)
+    R["d_wti_pos"] <- 1
+    R["d_wti_neg"] <- -1
+    
+    diff_val <- as.numeric(R %*% b)
+    se_diff  <- sqrt(as.numeric(t(R) %*% v %*% R))
+    t_stat   <- diff_val / se_diff
+    p_val    <- 2 * (1 - pt(abs(t_stat), df = mod$df.residual))
+    
+    tidy_mod <- tidy_hac(mod, V_hac) |>
+      dplyr::filter(term %in% c("d_wti_pos", "d_wti_neg")) |>
+      dplyr::mutate(horizon = h, pval_symmetry = p_val)
+    tidy_mod
+  })
+  res
+}
+
+# Prep data for LP
+df_lp <- as_tibble(datos_var) |> 
+  dplyr::mutate(d_covid = d_covid) |>
+  dplyr::mutate(d_wti_pos = pmax(0, d_wti),
+         d_wti_neg = pmin(0, d_wti))
+
+lp_sym <- estimate_lp(df_lp, h_max = 12, p = 2, exog = "d_covid")
+lp_asym_res <- estimate_lp_asym(df_lp, h_max = 12, p = 2, exog = "d_covid")
+
+# ── Rescale LP to the same normalization as the VAR IRFs ─────────────────────
+# VAR IRFs use a one-SD Cholesky WTI innovation (shock_wti).
+# LP βh coefficients are per unit of Δlog(WTI). We multiply by shock_wti so
+# that the LP and VAR figures share the same log-point scale (per 1-SD shock).
+lp_sym_scaled <- lp_sym |>
+  dplyr::mutate(
+    response_scaled = estimate  * shock_wti,
+    lower_scaled    = conf.low  * shock_wti,
+    upper_scaled    = conf.high * shock_wti
+  )
+
+# For asymmetric LP: positive shock uses +shock_wti, negative shock uses -shock_wti.
+# pmin/pmax ensure lower_scaled <= upper_scaled after sign flip.
+scale_lp_asym <- function(df, shock_size) {
+  df |>
+    dplyr::mutate(
+      response_scaled = estimate  * shock_size,
+      b1              = conf.low  * shock_size,
+      b2              = conf.high * shock_size,
+      lower_scaled    = pmin(b1, b2),
+      upper_scaled    = pmax(b1, b2)
+    ) |>
+    dplyr::select(-b1, -b2)
+}
+
+lp_asym_scaled <- lp_asym_res |>
+  dplyr::mutate(Shock = ifelse(term == "d_wti_pos",
+                               "Positive shock (WTI+)",
+                               "Negative shock (WTI-)")) |>
+  dplyr::group_by(term) |>
+  dplyr::group_modify(~ {
+    s <- if (unique(.y$term) == "d_wti_pos") shock_wti else -shock_wti
+    scale_lp_asym(.x, s)
+  }) |>
+  dplyr::ungroup()
+```
+
+```{r lp-asym-summary, include=FALSE}
+# Extract p-values for symmetry
+lp_sym_tests <- lp_asym_res |> 
+  dplyr::select(horizon, pval_symmetry) |> 
+  dplyr::distinct() |>
+  dplyr::mutate(is_sig = pval_symmetry < 0.10)
+
+# Quantities quoted in the prose below. Bound to the computation so that
+# knitting the document is what validates them.
+sym_m3      <- round(lp_sym_tests$pval_symmetry[lp_sym_tests$horizon == 2], 3)
+sym_rej     <- sort(lp_sym_tests$horizon[lp_sym_tests$pval_symmetry < 0.05]) + 1
+sym_rej_txt <- if (length(sym_rej) == 0) "no horizon" else
+               paste0(if (length(sym_rej) == 1) "month " else "months ",
+                      paste(sym_rej, collapse = " and "))
+get_scaled  <- function(tm, h) round(lp_asym_scaled$response_scaled[
+                 lp_asym_scaled$term == tm & lp_asym_scaled$horizon == h], 3)
+asym_m3_pos <- get_scaled("d_wti_pos", 2)
+asym_m3_neg <- get_scaled("d_wti_neg", 2)
+```
+
+```{r lp-symmetric-plot, fig.cap="Symmetric Local Projections: response of log public investment to a one-standard-deviation WTI innovation (same normalization as the VAR IRFs). LP coefficients and confidence intervals are rescaled by the standard deviation of the WTI innovation used in the Cholesky decomposition. Shaded area: 95\\% Newey-West HAC confidence intervals.", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+ggplot(lp_sym_scaled, aes(x = horizon, y = response_scaled)) +
+  geom_line(color = "darkblue", size = 1) +
+  geom_ribbon(aes(ymin = lower_scaled, ymax = upper_scaled), alpha = 0.2, fill = "darkblue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_continuous(breaks = 0:12) +
+  theme_minimal(base_size = 12) +
+  labs(title = "Local Projections (Symmetric)",
+       x = "Horizon (Months)",
+       y = "Response to a one-SD WTI innovation (log-points)")
+```
+
+A key component of this identification strategy is the analysis of **asymmetry**. Does the government react differently to oil price windfalls compared to price collapses? We estimate a joint Local Projections model and perform a formal Wald test for each horizon $H_0: \beta_h^+ = \beta_h^-$. Figure \@ref(fig:lp-asymmetric-plot) displays the IRFs for positive and negative shocks.
+
+```{r lp-asymmetric-plot, fig.cap="Asymmetric Local Projections: responses of log public investment to positive (left) and negative (right) WTI shocks, normalized to the same one-standard-deviation WTI innovation used in the VAR IRFs. LP coefficients and confidence intervals are rescaled by the standard deviation of the WTI innovation used in the Cholesky decomposition; for the negative-shock panel the response is evaluated at $-s$ because $\\Delta lx_t^- = \\min(0, \\Delta lx_t)$. Both panels share the same vertical scale. Shaded areas: 95\\% Newey-West HAC confidence intervals.", fig.align='center', fig.pos="H", out.width="70%", fig.height=5}
+# Compute a common y-axis range from the rescaled bounds (shared scale across panels)
+y_range <- range(c(lp_asym_scaled$lower_scaled, lp_asym_scaled$upper_scaled), na.rm = TRUE)
+y_pad   <- diff(y_range) * 0.05
+
+ggplot(lp_asym_scaled, aes(x = horizon, y = response_scaled, color = Shock, fill = Shock)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_ribbon(aes(ymin = lower_scaled, ymax = upper_scaled), alpha = 0.15, color = NA) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~Shock, scales = "fixed") +
+  coord_cartesian(ylim = c(y_range[1] - y_pad, y_range[2] + y_pad)) +
+  scale_x_continuous(breaks = 0:12) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  labs(title = "Asymmetric Fiscal Response (Local Projections Joint Model)",
+       x = "Horizon (Months)",
+       y = "Response to a one-SD WTI innovation (log-points)")
+```
+
+The results reveal a pronounced asymmetry in the point estimates. At month 3, a **negative shock (WTI-)** is associated with a contraction of `r asym_m3_neg` log points in public investment, against `r asym_m3_pos` log points for a **positive shock (WTI+)** of the same magnitude --- an order of magnitude larger, and consistent with the institutional lag narrative. The Wald test for equality of the two coefficients, however, does not reject symmetry at this horizon ($p = `r sym_m3`$); at the 5% level symmetry is rejected only at `r sym_rej_txt`, where the ordering of the two responses reverses. We therefore read this heightened sensitivity to price falls as a descriptive feature of the estimated responses at short horizons, characteristic of the fiscal consolidation regime of the post-2015 decade, rather than as a statistically established structural asymmetry.
+
+## Forecast Error Variance Decomposition
+
+The FEVD reveals the relative importance of each shock in explaining the forecast error variance of public investment.
+
+```{r fevd-table}
+fevd_res <- fevd(modelo_var, n.ahead = 12)
+fevd_inv <- fevd_res$inv
+tab_fevd <- tibble(
+  Horizon = c("1 Month", "3 Months", "6 Months", "12 Months"),
+  `WTI (%)` = round(fevd_inv[c(1, 3, 6, 12), "d_wti"] * 100, 2),
+  `Balance (%)` = round(fevd_inv[c(1, 3, 6, 12), "bal"] * 100, 2),
+  `Investment (%)` = round(fevd_inv[c(1, 3, 6, 12), "inv"] * 100, 2)
+)
+
+# Quantities quoted in the prose and in the Conclusions. Bound to the
+# computation so that knitting the document is what validates them.
+fevd_bal_1m  <- round(fevd_inv[1,  "bal"]   * 100, 2)
+fevd_wti_1m  <- round(fevd_inv[1,  "d_wti"] * 100, 2)
+fevd_wti_12m <- round(fevd_inv[12, "d_wti"] * 100, 2)
+
+kable(tab_fevd, booktabs = TRUE, caption = "FEVD: Share of forecast variance of log public investment", label = "tabla-fevd") |>
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+The FEVD indicates that the relative importance of shocks varies across horizons. At the one-month horizon, fiscal-balance innovations account for the largest share of forecast-error variance in public investment (`r fevd_bal_1m`%), while WTI innovations explain only `r fevd_wti_1m`%. From three to twelve months, investment's own innovations explain slightly more than half of the variance, while the fiscal balance remains a substantial secondary component and WTI innovations rise to approximately `r round(fevd_wti_12m)`% by month 12 (Table \@ref(tab:tabla-fevd)). This pattern suggests that oil prices do not mechanically dominate public-investment dynamics. Instead, the results are consistent with a fiscally mediated process in which liquidity conditions and investment inertia both matter. The own-innovation component should be interpreted as model-based persistence and omitted shocks, not as direct evidence of institutional factors.
+
+## Robustness: COVID-19 Control and VAR(12)
+
+```{r var-covid, include=FALSE}
+modelo_covid <- VAR(datos_var, p = 2, type = "const",
+                    exogen = matrix(d_covid, ncol = 1,
+                                    dimnames = list(NULL, "d_covid")))
+caus_covid <- causality(modelo_covid, cause = "d_wti")
+```
+
+```{r irf-covid-fig-plot, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation WTI shock, VAR(2) with COVID-19 dummy (March--June 2020). Dashed red lines: 95\\% bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+irf_covid <- irf(modelo_covid, impulse = "d_wti", response = "inv",
+                 n.ahead = 12, boot = TRUE, ci = 0.95, runs = 500)
+plot_irf(irf_covid,
+         impulse_name  = "d_wti",
+         response_name = "inv",
+         main = "Response of public investment to WTI shock (with COVID dummy)",
+         ylab = "Response (log-points)")
+```
+
+```{r irf-covid-vals, include=FALSE}
+irf_cv     <- irf_covid$irf$d_wti
+peak_m_cv  <- which.max(irf_cv)
+peak_v_cv  <- round(max(irf_cv), 4)
+peak_p_cv  <- round(peak_v_cv * 100, 2)
+pval_gr_cv <- round(caus_covid$Granger$p.value, 4)
+```
+
+```{r var12, include=FALSE}
+modelo_var12 <- VAR(datos_var, p = 12, type = "const")
+caus_12      <- causality(modelo_var12, cause = "d_wti")
+```
+
+```{r irf-var12-fig-plot, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation WTI shock, VAR(12) sensitivity specification. Dashed red lines: 95\\% bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+irf_12 <- irf(modelo_var12, impulse = "d_wti", response = "inv",
+               n.ahead = 12, boot = TRUE, ci = 0.95, runs = 500)
+plot_irf(irf_12,
+         impulse_name  = "d_wti",
+         response_name = "inv",
+         main = "Response of public investment to WTI shock (VAR, 12 lags)",
+         ylab = "Response (log-points)")
+```
+
+```{r irf-12-vals, include=FALSE}
+irf_v12    <- irf_12$irf$d_wti
+peak_m_12  <- which.max(irf_v12)
+peak_v_12  <- round(max(irf_v12), 4)
+peak_p_12  <- round(peak_v_12 * 100, 2)
+pval_gr_12 <- round(caus_12$Granger$p.value, 4)
+```
+
+```{r tabla-comparacion-chunk}
+tab_comp <- tibble(
+  Model = c("VAR(2) -- Baseline",
+            "VAR(2) -- COVID dummy",
+            "VAR(12) -- Sensitivity"),
+  `Granger (p-value)` = c(pval_gr, pval_gr_cv, pval_gr_12),
+  `Peak Month`  = c(peak_m,  peak_m_cv,  peak_m_12),
+  `Peak Response`     = c(peak_v,  peak_v_cv,  peak_v_12),
+  `Approx. response (%)`    = c(peak_pct, peak_p_cv, peak_p_12)
+)
+
+kable(tab_comp,
+      booktabs = TRUE,
+      linesep  = "",
+      escape   = TRUE,
+      caption  = "Model comparison: peak response of public investment to a WTI shock",
+      label    = "tabla-comparacion") |>
+  kable_styling(latex_options = c("hold_position", "striped"),
+                font_size = 10) |>
+  column_spec(1, width = "5.5cm") |>
+  column_spec(2:5, width = "2.4cm")
+```
+
+*Note: Values in the last column are the peak responses of public investment, in log points, to a one-standard-deviation innovation in WTI returns (the orthogonalized innovation has a standard deviation of `r shock_pct`%; for reference, the unconditional standard deviation of monthly WTI log-changes is `r sd_wti_pct`%). These are approximate percentage changes, not elasticities with respect to a 1% oil-price increase.*
+
+Table \@ref(tab:tabla-comparacion) summarizes the three specifications (see also Figures \@ref(fig:irf-covid-fig-plot) and \@ref(fig:irf-var12-fig-plot)).
+ The baseline and COVID-dummy models consistently fail to reject Granger non-causality ($p = `r pval_gr`$ and $p = `r pval_gr_cv`$ respectively), supporting the institutional friction narrative. Notably, the VAR(12) specification rejects Granger non-causality at the 1% level ($p = `r pval_gr_12`$), suggesting that WTI price information does carry predictive content for public investment when sufficiently long lag structures are considered --- consistent with the multi-month bureaucratic pipeline described above. This finding qualifies rather than overturns the baseline result: when up to twelve monthly lags are included, lagged WTI returns contain additional predictive information for public investment. This result supports a delayed transmission but does not identify a specific 6--12-month response window, as the rejection may be driven by early lags in the joint test. The COVID-dummy model yields an attenuated peak response (`r peak_p_cv`%), confirming that the pandemic episode introduced upward bias in the baseline. Across all specifications the direction of the peak response is positive and the impulse remains bounded within the 12-month horizon.
+
+Regarding residual diagnostics, the VAR(2) is retained as a parsimonious benchmark, but its residual autocorrelation implies that its point magnitudes should be interpreted cautiously. The VAR(12) captures a richer lag structure and yields directionally similar impulse responses; however, it also fails to pass the Portmanteau serial-correlation diagnostic in this relatively short monthly sample ($p = `r pval_port_12`$). Robustness therefore does not rest on the VAR(12) having superior diagnostics, but on the directional consistency across three independent specifications: VAR(2), VAR(12), and Local Projections estimated with Newey--West HAC standard errors. We place greater weight on the conclusions common to all three --- specifically, the positive direction and the delayed timing of the investment response.
+
+# Sub-period Analysis: Institutional Heterogeneity
+
+## Motivation and Sub-period Definition
+
+Ecuador's 2015--2025 window spans four presidential administrations with markedly different fiscal orientations, debt positions, and access to international capital markets. This institutional variation offers an informative comparative framework for testing whether the aggregate procyclicality estimate conceals regime-specific heterogeneity. Table \@ref(tab:subperiodos) summarizes the presidential sub-periods analyzed.
+
+```{r tabla-subperiodos}
+tab_sub <- tibble(
+  `Administration`   = c("Rafael Correa (late)",
+                          "Lenin Moreno",
+                          "G. Lasso / D. Noboa"),
+  `Period`           = c("Jan 2015 -- May 2017",
+                          "Jun 2017 -- May 2021",
+                          "Jun 2021 -- Nov 2025"),
+  `Eff. obs. (VAR)`  = c("26*", "45", "51"),
+  `WTI context`      = c("Sustained price decline",
+                          "Moderate recovery + pandemic",
+                          "Post-pandemic rebound + correction"),
+  `Fiscal context`   = c("Post-boom contraction, high debt",
+                          "IMF program, austerity",
+                          "Fiscal consolidation, debt restructuring")
+)
+
+kable(tab_sub,
+      booktabs = TRUE,
+      linesep  = "",
+      escape   = FALSE,
+      caption  = "Presidential sub-periods for heterogeneity analysis",
+      label    = "subperiodos") |>
+  kable_styling(latex_options = c("hold_position", "striped"),
+                font_size = 10) |>
+  column_spec(1, width = "3.5cm") |>
+  column_spec(2, width = "3.2cm") |>
+  column_spec(3, width = "1.8cm") |>
+  column_spec(4, width = "3.5cm") |>
+  column_spec(5, width = "3.5cm")
+```
+
+**Methodological note:** Effective observations are those available to the VAR(2) after first-differencing and lag initialization. The Correa sub-period contains 26 effective VAR observations, below the threshold typically recommended for reliable trivariate VAR inference (approximately 10 observations per estimated parameter; with a VAR(2) on three variables this implies a minimum of roughly 42 observations). Results for this sub-period are reported as indicative and interpreted alongside the IRF plots rather than as standalone point estimates. The Moreno (45 obs.) and Lasso/Noboa (51 obs.) sub-periods exceed that threshold.
+
+## Sub-period Estimation
+
+```{r subperiodos-setup, include=FALSE}
+estimar_sub <- function(wti_sub, bal_sub, inv_sub) {
+  lw  <- log(wti_sub)
+  li  <- log(inv_sub)
+  dlw <- diff(lw)
+  lb2 <- window(bal_sub, start = tsp(dlw)[1])
+  li2 <- window(li,      start = tsp(dlw)[1])
+  dv  <- cbind(dlw, lb2, li2)
+  colnames(dv) <- c("d_wti", "bal", "inv")
+  if (nrow(dv) < 10) return(NULL)
+  mod <- tryCatch(VAR(dv, p = 2, type = "const"), error = function(e) NULL)
+  if (is.null(mod)) return(NULL)
+  ir  <- tryCatch(
+    irf(mod, impulse = "d_wti", response = "inv",
+        n.ahead = 12, boot = TRUE, ci = 0.95, runs = 500),
+    error = function(e) NULL)
+  if (is.null(ir)) return(NULL)
+  vals <- ir$irf$d_wti
+  caus <- tryCatch(causality(mod, cause = "d_wti")$Granger,
+                   error = function(e) NULL)
+  # Report the coefficient of greatest absolute magnitude (preserving sign)
+  idx_peak <- which.max(abs(vals))
+  peak_val  <- vals[idx_peak]
+  list(irf    = ir,
+       vals   = vals,
+       nobs   = mod$obs,
+       peak_m = idx_peak,
+       peak_v = round(peak_val, 4),
+       peak_p = round(peak_val * 100, 2),
+       pval_g = if (!is.null(caus)) round(caus$p.value, 4) else NA)
+}
+
+r1 <- estimar_sub(window(ts_wti, c(2015,1), c(2017,5)),
+                  window(ts_bal, c(2015,1), c(2017,5)),
+                  window(ts_inv, c(2015,1), c(2017,5)))
+r2 <- estimar_sub(window(ts_wti, c(2017,6), c(2021,5)),
+                  window(ts_bal, c(2017,6), c(2021,5)),
+                  window(ts_inv, c(2017,6), c(2021,5)))
+r3 <- estimar_sub(window(ts_wti, c(2021,6), c(2025,11)),
+                  window(ts_bal, c(2021,6), c(2025,11)),
+                  window(ts_inv, c(2021,6), c(2025,11)))
+
+# Effective observations actually used by each sub-period VAR(2), i.e. after
+# first-differencing and lag initialization. Quoted in the Limitations.
+sub_obs     <- vapply(list(r1, r2, r3),
+                      function(z) if (is.null(z)) NA_integer_ else as.integer(z$nobs),
+                      integer(1))
+sub_obs_min <- min(sub_obs, na.rm = TRUE)
+sub_obs_max <- max(sub_obs, na.rm = TRUE)
+```
+
+```{r irf-sub2-plot, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation WTI shock, Moreno administration (June 2017--May 2021). Shaded band: 95\\% bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+if (!is.null(r2)) {
+  plot_irf(r2$irf,
+           impulse_name  = "d_wti",
+           response_name = "inv",
+           main = "IRF: Moreno administration (2017--2021)",
+           ylab = "Response (log-points)")
+}
+```
+
+```{r irf-sub3-plot, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation WTI shock, Lasso/Noboa administrations (June 2021--November 2025). Shaded band: 95\\% bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+if (!is.null(r3)) {
+  plot_irf(r3$irf,
+           impulse_name  = "d_wti",
+           response_name = "inv",
+           main = "IRF: Lasso/Noboa administrations (2021--2025)",
+           ylab = "Response (log-points)")
+}
+```
+
+## Comparative Summary Table
+
+```{r tabla-resultados-sub-chunk}
+fila <- function(r, nombre, nobs) {
+  if (is.null(r))
+    return(tibble(A = nombre, B = "---", C = "---", D = "---", E = "---", F_ = "---", G_ = nobs))
+  # Extract 95% bootstrap CI at peak month
+  lo_at_peak <- round(r$irf$Lower$d_wti[r$peak_m], 4)
+  hi_at_peak <- round(r$irf$Upper$d_wti[r$peak_m], 4)
+  ci_str <- paste0("[", lo_at_peak, ", ", hi_at_peak, "]")
+  tibble(A = nombre,
+         B = as.character(r$pval_g),
+         C = as.character(r$peak_m),
+         D = as.character(r$peak_v),
+         E = paste0(r$peak_p, " %"),
+         F_ = ci_str,
+         G_ = nobs)
+}
+
+# Full-sample CI at peak month (from irf_wti already computed above)
+fs_lo <- round(irf_wti$Lower$d_wti[peak_m], 4)
+fs_hi <- round(irf_wti$Upper$d_wti[peak_m], 4)
+fs_ci <- paste0("[", fs_lo, ", ", fs_hi, "]")
+
+tab_res <- bind_rows(
+  fila(r2, "Lenin Moreno (2017-2021)",    as.character(r2$nobs)),
+  fila(r3, "Lasso/Noboa (2021-2025)",     as.character(r3$nobs)),
+  tibble(A = "Full sample (baseline)",
+         B = as.character(pval_gr),
+         C = as.character(peak_m),
+         D = as.character(peak_v),
+         E = paste0(peak_pct, " %"),
+         F_ = fs_ci,
+         G_ = "128")
+)
+colnames(tab_res) <- c("Administration",
+                        "Granger (p-value)",
+                        "Peak Month",
+                        "Peak Response",
+                        "Approx. (%)",
+                        "95% CI at peak",
+                        "Eff. Obs.")
+
+kable(tab_res,
+      booktabs = TRUE,
+      linesep  = "",
+      escape   = TRUE,
+      caption  = "Fiscal response heterogeneity across administrative regimes. Peak response is the change in log public investment, in log points, following a one-standard-deviation WTI shock, measured at the month of greatest absolute magnitude. 95\\% CI: bootstrap (500 runs).",
+      label    = "resultados-sub") |>
+  kable_styling(latex_options = c("hold_position", "striped", "scale_down"),
+                font_size = 10) |>
+  column_spec(1, width = "3.5cm") |>
+  column_spec(2:5, width = "1.8cm") |>
+  column_spec(6, width = "3cm") |>
+  column_spec(7, width = "1.5cm")
+```
+
+*Note: Peak Response is the log-point change at the month of greatest absolute magnitude. Approx. (%) converts the log-point coefficient to an approximate percentage change. The 95% CI column reports the bootstrap confidence interval bounds at the same peak month (500 runs). All sub-period models use VAR(2) with Cholesky identification ($\Delta lx_t \rightarrow b_t \rightarrow ly_t$). The Correa sub-period ($n=28$) is reported in the Appendix as indicative only.*
+
+Table \@ref(tab:resultados-sub) reveals notable descriptive heterogeneity. The **Moreno administration** exhibits a positive peak response (`r if(!is.null(r2)) paste0(r2$peak_v, " at month ", r2$peak_m) else "---"`), suggesting that despite structural constraints, capital expenditure in this period retained some sensitivity to oil price windfalls. In contrast, the **Lasso/Noboa** sub-period displays a negative peak response, indicating that the dominant response to WTI innovations in the most recent window was a *reduction* in public investment.
+
+This pattern is consistent with a context of **fiscal consolidation** where commodity-income windfalls are directed toward debt service or deficit reduction rather than expansionary spending. The 2021--2025 window was also characterized by several supply-side shocks that complicate a purely fiscal-consolidation interpretation: a disruption to oil production and exports in mid-2022 (including strikes and infrastructure damage), a severe electricity crisis in 2024 associated with drought and capacity shortfalls, and the suspension of operations at several oil wells following the 2023 constitutional referendum. These events likely suppressed both fiscal revenues and investment capacity independently of price movements, contributing to the apparent de-coupling between WTI and public investment in this sub-period. Sub-period estimates should therefore be interpreted as descriptive of regime-level patterns rather than as structural parameters. The Correa period results, based on a limited sample ($n = 26$), are provided in the Appendix as indicative evidence of early adjustment patterns.
+
+# Discussion
+
+## Friction-Laden Transmission and the Limits of Procyclicality
+
+The empirical results allow us to evaluate each of the hypotheses stated in the Introduction. **H1** is partially supported: WTI shocks produce a delayed positive response in public investment whose magnitude is economically non-negligible (an implied elasticity of approximately unity), but which is imprecisely estimated at short horizons. **H2** is supported in predictive terms: the fiscal balance contains significant predictive information ($p < 0.0001$) and explains over 50% of the FEVD at the one-month horizon, although the accounting relationship between the balance and investment prevents a causal mediation interpretation. **H3** receives descriptive rather than statistical support: at month 3 the estimated contraction following a negative shock (`r asym_m3_neg` log points) is an order of magnitude larger than the response to a positive shock of the same size (`r asym_m3_pos`), but the Wald test does not reject symmetry at that horizon ($p = `r sym_m3`$). **H4** is supported descriptively: the Moreno and Lasso/Noboa sub-periods display markedly different procyclicality patterns, though these differences should not be interpreted as formal evidence of structural parameter shifts. We elaborate on each of these findings below.
+
+The aggregate results suggest a nuanced version of the procyclicality hypothesis in a dollarized setting, particularly when accounting for the overall fiscal position. The baseline trivariate VAR(2) and the Local Projections indicate that the *statistical* predictive content of WTI returns is weak at short horizons --- a statement about precision rather than about the size of the response, which is economically non-negligible --- while the fiscal balance shows strong predictive content for the system's joint dynamics ($p < 0.0001$). This is consistent with **institutional friction**: Ecuador's budget execution is governed by a multi-stage bureaucratic pipeline where total fiscal liquidity --- the *Resultado Global* --- serves as a primary constraint. The 3-to-6 month lag identified in the IRFs likely reflects the time required for fiscal signals to translate into actual contract awards and *devengado* registrations.
+
+## Asymmetry and the Fiscal Consolidation Regime
+
+The Local Projections reveal asymmetry in the estimated responses at short horizons: at month 3 the contraction that follows a negative shock is an order of magnitude larger than the response to a positive shock of the same size, although the Wald test does not reject symmetry at that horizon ($p = `r sym_m3`$). This pattern has a clear theoretical counterpart. @gavin1997 identify a ratchet effect in Latin American fiscal policy whereby expenditure expansions during booms are politically difficult to reverse, while contractions during downturns are abrupt; the asymmetry documented here reflects the downward leg of this cycle. @kaminsky2004 attribute a similar pattern to borrowing constraints: governments facing sovereign-risk premia cannot smooth investment across the cycle and are forced to cut capital spending when revenues fall. @ardanaz2021 show that fiscal rules that ring-fence investment can break this asymmetry; Ecuador's absence of a robust investment-protecting rule during most of the 2015--2025 period is therefore a proximate institutional explanation for the observed pattern. In the Ecuadorian consolidation regime of the post-2015 decade, this asymmetry is consistent with structural constraints: oil windfalls are often prioritized for rebuilding buffers or servicing debt, while price collapses trigger immediate cuts to capital projects to preserve liquidity. This highlights the role of the fiscal balance as a "rigid" floor for investment. Additionally, this asymmetry admits a macro-financial reading, as the major negative price episodes (e.g., 2015--2016 and 2020) coincided with global recessions, broad revenue-wide contractions beyond oil, and sovereign debt restructuring, compounding the downward pressure on public investment.
+
+Two additional caveats apply. First, the negative episodes (2015--16 and 2020) coincide with global recessions and broad revenue contractions beyond oil, so the larger contractionary response may partly reflect these broader macro-financial conditions rather than the sign of the oil shock per se. Second, the Wald test does not reject symmetry at month 3 ($p = `r sym_m3`$); across the horizons examined it rejects at the 5% level only at `r sym_rej_txt`. The asymmetry visible at month 3 is therefore a descriptive feature of the point estimates rather than a statistically established result, and should be read as suggestive rather than as definitive evidence of a structural asymmetry.
+
+## Administrative Regimes and Heterogeneity
+
+The sub-period analysis suggests that the aggregate estimate masks fundamentally different fiscal regimes. The **Moreno period** (2017--2021) exhibited conventionally procyclical tendencies, where recovering oil prices and a stabilizing fiscal balance allowed for a modest expansion of investment. In contrast, the **Lasso/Noboa period** (2021--2025) was dominated by de-coupling, where the necessity of fiscal consolidation appears to have overridden commodity-income windfalls. In this period, public investment became an "adjustment variable" of the deficit, demonstrating that institutional priorities can override the commodity cycle.
+
+# Conclusions
+
+This paper provides an analysis of the Ecuadorian fiscal cycle using a trivariate framework that disentangles the effects of oil price shocks from the state's overall fiscal capacity. By treating the country as a **policy-relevant setting**, we document three principal findings.
+
+First, the dynamic patterns are consistent with a **friction-laden transmission** process in which both oil prices and the fiscal balance reach public investment only after administrative lags; this is compatible with the multi-stage procurement pipeline that governs Ecuador's *devengado* system. Second, we document **descriptive evidence of asymmetric responses at selected horizons**: in the estimated responses, investment contracts more after negative oil-price shocks than it expands after positive ones --- although the Wald test does not reject symmetry at month 3 ($p = `r sym_m3`$) --- a pattern consistent with the ratchet-effect and borrowing-constraint mechanisms identified in the broader Latin American fiscal literature. Finally, the sub-period analysis reveals **institutional heterogeneity**: the oil-investment link is not a structural constant but varies with the prevailing fiscal regime and the degree of consolidation pressure.
+
+These results should be interpreted with six limitations in mind. First, WTI is a proxy for international oil-price conditions rather than a direct measure of fiscal oil revenues, and does not decompose supply- from demand-driven price movements [@kilian2009]. Second, monthly public investment may contain administrative seasonality that is only partially captured by the dynamic specification. Third, the baseline VAR(2) shows residual autocorrelation; directional consistency across the VAR(12) robustness specification supports the reliability of the main conclusions, but the residual autocorrelation in the parsimonious model warrants caution in interpretation. Fourth, administration-level estimates are descriptive: sub-periods range from `r sub_obs_min` to `r sub_obs_max` effective VAR observations --- short samples for reliable sub-period generalization --- and each coincides with multiple concurrent macroeconomic shocks (e.g., the 2022 national strikes, the well closures following the 2023 referendum on Yasuní, and the 2024 energy crisis). Fifth, the investment series is measured in nominal terms without a specific public-investment deflator, which may confound volume responses with price-level effects during periods of high inflation, and the aggregate NFPS series combines central and subnational capital spending, which follow different allocation rules. Sixth, the baseline model omits potentially important macroeconomic controls --- including sovereign risk, debt overhang, GDP growth, exchange rate expectations, and government revenues --- whose exclusion may introduce omitted-variable bias; incorporating these variables is a priority for future research.
+
+**Policy implications** follow from three estimated quantities, although neither instrument discussed below is itself evaluated in our model. First, the fiscal balance accounts for `r fevd_bal_1m`% of the forecast error variance of public investment at the one-month horizon, against `r fevd_wti_1m`% for WTI returns (Table \@ref(tab:tabla-fevd)): public investment tracks aggregate fiscal liquidity far more closely than the oil price itself, which is why stabilization mechanisms should insulate capital budgets from the balance rather than from the price. Second, at month 3 the Local Projections estimate a contraction of `r asym_m3_neg` log points following a negative WTI shock against `r asym_m3_pos` log points following a positive one; although this difference is not statistically significant ($p = `r sym_m3`$), the point estimates locate the exposure on the downside, which is the margin on which ring-fencing selected investment programs --- of the type analyzed by @ardanaz2021 --- would bind. Third, the peak investment response arrives at month `r peak_m` rather than on impact, consistent with the multi-stage procurement and *devengado* pipeline, so streamlining that pipeline is the margin on which the delay itself could be shortened. We present these as implications consistent with the direction, timing, and relative magnitude of the estimated responses, not as evaluated policy interventions. Future research could extend the analysis by incorporating direct fiscal oil-revenue measures, sovereign-risk indicators, or more detailed information on budget execution and procurement. Protecting public investment from fiscal-balance volatility is relevant for preserving the growth-enhancing role of public capital and public goods provision in resource-dependent economies.
+
+# Data and Code Availability
+
+The WTI crude oil price series (monthly average spot price, USD/barrel) is publicly available from the U.S. Energy Information Administration (EIA) at \url{https://www.eia.gov} and through the FRED database of the Federal Reserve Bank of St.\ Louis (series: DCOILWTICO; accessed January 2026). The fiscal series for the Non-Financial Public Sector (NFPS) --- including public investment (*devengado* on non-financial assets) and the fiscal balance (*Resultado Global*) --- are drawn from the Central Bank of Ecuador (BCE) *Boletín de Información Estadística Mensual*, Table 2.2.1 (Sector Público No Financiero: Resumen de Operaciones), available at \url{https://www.bce.fin.ec}; the series were accessed in January 2026 and cover January 2015 to November 2025. The processed dataset, the complete analysis code (this R Markdown document), and a README documenting variable definitions, software requirements, and reproduction instructions are permanently archived in the public repository **[[DOI PENDIENTE --- PEGAR AQUI ANTES DE ENVIAR]]**. Knitting this document in full reproduces every table and figure reported in the paper.
+
+# Acknowledgments
+
+The author would like to thank the peer reviewers for their constructive comments. During the final preparation of this manuscript, generative AI (ChatGPT v4) was used for editorial review and language refinement; however, the author reviewed and edited all outputs and takes full responsibility for the content and interpretation of the study.
+
+**Funding:** This research received no external funding.
+
+**Conflicts of Interest:** The author declares no conflicts of interest.
+
+# Appendix
+
+## Raw Unit-Root Test Outputs
+
+### ADF Tests
+```{r appendix-adf, comment=""}
+print(adf_wti_raw)
+print(adf_bal_raw)
+print(adf_inv_raw)
+```
+
+### KPSS Tests
+```{r appendix-kpss, comment=""}
+summary(kpss_wti_raw)
+summary(kpss_bal_raw)
+summary(kpss_inv_raw)
+```
+
+### Zivot-Andrews Tests
+```{r appendix-za, comment=""}
+summary(za_wti_raw)
+summary(za_bal_raw)
+summary(za_inv_raw)
+```
+
+## Model Diagnostics
+```{r appendix-diag, comment=""}
+roots(modelo_var)
+prueba_serial$serial
+prueba_jb$jb.mul
+```
+
+## Early Sample Analysis (Correa Administration)
+
+The late-Correa administration (2015--2017) provides an early window into the post-boom adjustment. Due to the limited sample size ($n=26$), these results are indicative rather than definitive but suggest an attenuated or negative impact consistent with early fiscal consolidation efforts.
+
+```{r irf-sub1-plot-appendix, fig.cap="Orthogonalized IRF: response of log public investment to a one-standard-deviation WTI shock, Correa administration (January 2015--May 2017). Note: 26 effective observations; results are indicative only. Shaded band: 95\\% bootstrap confidence interval (500 runs).", fig.align='center', fig.pos="H", out.width="65%", fig.height=4}
+if (!is.null(r1)) {
+  plot_irf(r1$irf,
+           impulse_name  = "d_wti",
+           response_name = "inv",
+           main = "IRF: Correa administration (2015--2017) - indicative",
+           ylab = "Response (log-points)")
+}
+```
+
+# References

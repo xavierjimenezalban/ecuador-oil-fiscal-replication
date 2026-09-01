@@ -1,0 +1,19 @@
+# Knit by-products. These must never enter the archive: a cached run would let
+# the package appear to reproduce without actually re-executing the analysis.
+*_cache/
+*_files/
+*.log
+*.aux
+*.tex
+!code/*.Rmd
+Rplots.pdf
+
+# R session state
+.Rhistory
+.RData
+.Rproj.user/
+.Renviron
+
+# OS clutter
+.DS_Store
+Thumbs.db

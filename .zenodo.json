@@ -1,0 +1,33 @@
+{
+  "title": "Replication package for \"Oil Price Shocks, Fiscal Balance, and Public Investment in Ecuador, 2015-2025\"",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "MIT",
+  "language": "eng",
+  "version": "1.0.0",
+  "creators": [
+    {
+      "name": "Jiménez-Albán, Xavier",
+      "orcid": "0000-0002-7227-9392",
+      "affiliation": "Independent Researcher, Quito, Ecuador"
+    },
+    {
+      "name": "Urquiza-Aguiar, Luis",
+      "orcid": "0000-0002-6405-2067",
+      "affiliation": "Universidad de las Américas (UDLA), Quito, Ecuador"
+    }
+  ],
+  "description": "<p>Data and R Markdown code reproducing every table, figure and statistic reported in the article <em>Oil Price Shocks, Fiscal Balance, and Public Investment in Ecuador, 2015-2025</em>.</p><p>The package contains the monthly analysis dataset for Ecuador (January 2015 - November 2025, 131 observations) covering the WTI crude oil spot price and Non-Financial Public Sector investment and overall fiscal balance; the complete analysis document, which estimates a VAR with impulse response functions, forecast error variance decomposition, sub-period and lag-order sensitivity models, and symmetric and asymmetric Local Projections with Newey-West HAC standard errors; the knitted PDF showing the expected output; and the Central Bank of Ecuador bulletin table that backs the oil-revenue share reported in the introduction.</p><p>Knitting the analysis document in full, in a single R session, reproduces the published tables and figures exactly. Data sources are the U.S. Energy Information Administration (WTI) and the Central Bank of Ecuador, <em>Boletín de Información Estadística Mensual</em>: Table 2.2.1 for the monthly fiscal series, and Table 2.2 for the oil-revenue share reported in the introduction.</p>",
+  "keywords": [
+    "oil price shocks",
+    "fiscal balance",
+    "public investment",
+    "Ecuador",
+    "vector autoregression",
+    "local projections",
+    "dollarization",
+    "reproducibility",
+    "replication package"
+  ],
+  "notes": "Code is released under the MIT License. The data files are redistributed from public sources (U.S. Energy Information Administration; Banco Central del Ecuador) and should be cited as documented in the README. BCE series are subject to later revision; this package fixes the vintage used in the article."
+}
