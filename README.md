@@ -10,6 +10,8 @@
 
 Manuscript under review at MDPI *Economies*.
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22233458.svg)](https://doi.org/10.5281/zenodo.22233458)
+
 ---
 
 ## Overview
@@ -217,6 +219,25 @@ absolute magnitude.
 **Effective observations** are those available to the VAR(2) after
 first-differencing and lag initialization: 128 for the full sample, and
 26 / 45 / 51 for the Correa / Moreno / Lasso–Noboa sub-periods respectively.
+
+## How to cite
+
+Version 1.0.0 of this package is archived on Zenodo and is the version that
+produced the results reported in the article:
+
+> Jiménez-Albán, X., & Urquiza-Aguiar, L. (2026). *Replication package for
+> "Oil Price Shocks, Fiscal Balance, and Public Investment in Ecuador,
+> 2015-2025"* (Version 1.0.0) [Software]. Zenodo.
+> <https://doi.org/10.5281/zenodo.22233458>
+
+Please cite the article as well when you use this package, and cite the original
+data producers — the U.S. Energy Information Administration and the Banco Central
+del Ecuador — when you use the underlying series. Machine-readable citation
+metadata is in `CITATION.cff`.
+
+The archived version is fixed; this repository may receive later corrections, so
+the two can differ. Cite the DOI above for the exact package behind the
+published results.
 
 ## License
 
